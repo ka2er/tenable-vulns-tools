@@ -1,0 +1,19 @@
+tenable:
+  access_key: 
+  secret_key: 
+  scan_ids: [
+    9999,
+    1111
+  ]
+output_folder: Out
+cache_folder: Cache
+zone_map: {
+  patternA: A_name,
+  patternB: B_name,
+  default: default_name
+}
+type_map: {
+  patternX: type_X,
+  patternY: type_Y,
+  default: type_default
+}
