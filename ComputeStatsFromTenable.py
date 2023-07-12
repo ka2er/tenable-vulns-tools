@@ -70,6 +70,11 @@ sql_init = "CREATE TABLE IF NOT EXISTS vulns_stats (zone txt, target_type txt, n
 conn.execute(sql_init)
 conn.commit()
 
+
+sql_init_rems = "CREATE TABLE IF NOT EXISTS remediations_stats (zone txt, target_type txt, nb_hosts integer, nb_vulns integer, remediation_id txt, description txt, date date, UNIQUE(zone, target_type,date, remediation_id));"
+conn.execute(sql_init_rems)
+conn.commit()
+
 # load scands ids from config file
 scan_ids = config.get('tenable').get('scan_ids')
 
@@ -99,7 +104,11 @@ def get_scan_history(scan_id):
     #json_debug(response.json())
     return response.json().get('history')
 
-def get_scan_stats(scan_id, history_id):
+
+#
+# refactor get_scan_stats => get_scan_details => stats, remediations
+#
+def get_scan_details(scan_id, history_id):
     print(f"Get scan history stats for {scan_id}#{history_id}")
 
     url = f"https://cloud.tenable.com/scans/{scan_id}?history_id={history_id}"
@@ -110,6 +119,22 @@ def get_scan_stats(scan_id, history_id):
     #json_debug(response)
     info = response.get('info')
     hosts = response.get('hosts')
+
+    # 
+    remediations = response.get('remediations').get('remediations')
+
+# "remediations": {
+#   "num_cves": 2536,
+#   "num_hosts": 10,
+#   "num_remediated_cves": 2283,
+#   "num_impacted_hosts": 8,
+#   "remediations": [
+#    {
+#     "vulns": 1,
+#     "value": "96a449d372af3d23ca9a4f9f9a2ea73e",
+#     "hosts": 1,
+#     "remediation": "FreeBSD : gpgme -- heap-based buffer overflow in gpgsm status handler (90ca3ba5-19e6-11e4-8616-001b3856973b): Update the affected package."
+#    },
 
     #json_debug(response)
     pd = pandas.DataFrame(hosts)
@@ -128,7 +153,7 @@ def get_scan_stats(scan_id, history_id):
             "nb_hosts" : info.get('hostcount'),
             "nb_high" : pd['high'].sum(),
             "nb_critical" :  pd['critical'].sum()
-        }
+        }, remediations
     except KeyError as e:
         print(e)
         # # scan is cold ... we need to export it...
@@ -179,7 +204,7 @@ for scan_id in scan_ids:
             #x_scan_hot = True #### TO DEBUG - comment to not gather older reports...
             if x_scan_status & x_scan_hot:
                 print(f"{scan_id} {x_scan_id} {x_scan_uuid} {x_scan_status} on {x_scan_time_start}")
-                stats = get_scan_stats(scan_id, x_scan_id)
+                stats, remediations = get_scan_details(scan_id, x_scan_id)
                 #print(stats)
                 #print(config.get('zone_map'))
 
@@ -196,8 +221,17 @@ for scan_id in scan_ids:
 
                 # update DB 
                 sql_update = f"INSERT INTO vulns_stats (zone, target_type, nb_high, nb_critical, nb_scans, nb_assets, date) VALUES('{t_prop['zone_map']}', '{t_prop['type_map']}', {stats['nb_high']}, {stats['nb_critical']}, {stats['max_hosts']}, {stats['nb_hosts']}, date('{x_date}')) ON CONFLICT(zone, target_type, date) DO UPDATE SET nb_high={stats['nb_high']}, nb_critical={stats['nb_critical']};"
-                print(sql_update)
+                #print(sql_update)
                 conn.execute(sql_update)
+
+                for rem in remediations:
+
+                    # update remediation table
+                    sql_update = f"INSERT INTO remediations_stats (zone, target_type, nb_hosts, nb_vulns, remediation_id, description, date) VALUES('{t_prop['zone_map']}', '{t_prop['type_map']}', {rem['hosts']}, {rem['vulns']}, '{rem['value']}', ?, date('{x_date}')) ON CONFLICT(zone, target_type, date, remediation_id) DO UPDATE SET nb_hosts={rem['hosts']}, nb_vulns={rem['vulns']};"
+                    #print(sql_update)
+                    conn.execute(sql_update, (rem['remediation'],))
+                    
+
     except Exception as e:
         print(f"Scan ID:{scan_id} is empty ({e})")
         
